@@ -7,26 +7,29 @@ TENSORBOARD_LOG_DIR = "tensorboard_log"
 RESULTS_DIR = "results"
 
 # date format: '%Y-%m-%d'
-TRAIN_START_DATE = "2014-01-06"  # bug fix: set Monday right, start date set 2014-01-01 ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 1658 and the array at index 1 has size 1657
-TRAIN_END_DATE = "2020-07-31"
+TRAIN_START_DATE = "2007-06-01"  # bug fix: set Monday right, start date set 2014-01-01 ValueError: all the input array dimensions for the concatenation axis must match exactly, but along dimension 0, the array at index 0 has size 1658 and the array at index 1 has size 1657
+TRAIN_END_DATE = "2013-01-01"
 
-TEST_START_DATE = "2020-08-01"
-TEST_END_DATE = "2021-10-01"
+TEST_START_DATE = "2025-01-01"
+TEST_END_DATE = "2025-03-28"
 
-TRADE_START_DATE = "2021-11-01"
-TRADE_END_DATE = "2021-12-01"
+TRADE_START_DATE = "2024-10-02"
+TRADE_END_DATE = "2025-11-01"
 
 # stockstats technical indicator column names
 # check https://pypi.org/project/stockstats/ for different names
 INDICATORS = [
-    "macd",
-    "boll_ub",
-    "boll_lb",
-    "rsi_30",
-    "cci_30",
-    "dx_30",
-    "close_30_sma",
-    "close_60_sma",
+    "rsi_14",
+    # "cci_30",
+    # "dx_30",
+    "close_9_sma",
+    "close_50_sma",
+    "close_200_sma",
+    # "macd",
+    # "macds",
+    # "macdh",
+    # "boll_ub",
+    # "boll_lb",
 ]
 
 
@@ -48,8 +51,8 @@ SAC_PARAMS = {
     "ent_coef": "auto_0.1",
 }
 ERL_PARAMS = {
-    "learning_rate": 3e-5,
-    "batch_size": 2048,
+    "learning_rate": 3e-5, # "learning_rate": 3e-5,
+    "batch_size": 1024, #"batch_size": 2048,
     "gamma": 0.985,
     "seed": 312,
     "net_dimension": 512,

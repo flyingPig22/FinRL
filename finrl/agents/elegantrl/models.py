@@ -15,8 +15,10 @@ MODELS = {
     "sac": AgentSAC,
     "ppo": AgentPPO,
     "a2c": AgentA2C,
+    "dqn": AgentDQN,
+    "ddqn": AgentDoubleDQN
 }
-OFF_POLICY_MODELS = ["ddpg", "td3", "sac"]
+OFF_POLICY_MODELS = ["ddpg", "td3", "sac", "dqn", "ddqn"]
 ON_POLICY_MODELS = ["ppo"]
 # MODEL_KWARGS = {x: config.__dict__[f"{x.upper()}_PARAMS"] for x in MODELS.keys()}
 #
@@ -43,19 +45,16 @@ class DRLAgent:
             make a prediction in a test dataset and get results
     """
 
-    def __init__(self, env, price_array, tech_array, turbulence_array):
+    def __init__(self, env, price_array, tech_array, turbulence_array, env_config):
         self.env = env
         self.price_array = price_array
         self.tech_array = tech_array
         self.turbulence_array = turbulence_array
+        self.env_config = env_config
+        self.net_dim = env_config["net_dim"]
+        self.break_step = env_config["break_step"]
 
     def get_model(self, model_name, model_kwargs):
-        self.env_config = {
-            "price_array": self.price_array,
-            "tech_array": self.tech_array,
-            "turbulence_array": self.turbulence_array,
-            "if_train": True,
-        }
         self.model_kwargs = model_kwargs
         self.gamma = model_kwargs.get("gamma", 0.985)
 
@@ -66,14 +65,17 @@ class DRLAgent:
             raise NotImplementedError("NotImplementedError")
 
         stock_dim = self.price_array.shape[1]
-        self.state_dim = 1 + 2 + 3 * stock_dim + self.tech_array.shape[1]
-        self.action_dim = stock_dim
+        # self.state_dim = 1 + 2 + 3 * stock_dim + self.tech_array.shape[1]
+        self.state_dim = 40
+        # self.action_dim = stock_dim
+        # for DQN, action_dim should be 3 which matches configuration in env_stocktrading_np.py
+        self.action_dim = 1
         self.env_args = {
             "env_name": "StockEnv",
             "config": self.env_config,
             "state_dim": self.state_dim,
             "action_dim": self.action_dim,
-            "if_discrete": False,
+            "if_discrete": True,
             "max_step": self.price_array.shape[0] - 1,
         }
 
@@ -81,13 +83,8 @@ class DRLAgent:
         model.if_off_policy = model_name in OFF_POLICY_MODELS
         if model_kwargs is not None:
             try:
-                model.break_step = int(
-                    2e5
-                )  # break training if 'total_step > break_step'
-                model.net_dims = (
-                    128,
-                    64,
-                )  # the middle layer dimension of MultiLayer Perceptron
+                model.break_step = self.break_step
+                model.net_dims = self.net_dim
                 model.gamma = self.gamma  # discount factor of future rewards
                 model.horizon_len = model.max_step
                 model.repeat_times = 16  # repeatedly update network using ReplayBuffer to keep critic's loss small
@@ -113,39 +110,40 @@ class DRLAgent:
         gpu_id = 0  # >=0 means GPU ID, -1 means CPU
         agent_class = MODELS[model_name]
         stock_dim = env_args["price_array"].shape[1]
-        state_dim = 1 + 2 + 3 * stock_dim + env_args["tech_array"].shape[1]
-        action_dim = stock_dim
+        # state_dim = 1 + 2 + 3 * stock_dim + env_args["tech_array"].shape[1]
+        state_dim = 40
+        action_dim = 1
         env_args = {
             "env_num": 1,
             "env_name": "StockEnv",
             "state_dim": state_dim,
             "action_dim": action_dim,
-            "if_discrete": False,
+            "if_discrete": True,
             "max_step": env_args["price_array"].shape[0] - 1,
             "config": env_args,
         }
 
         actor_path = f"{cwd}/act.pth"
-        net_dim = [2**7]
-
         """init"""
         env = environment
         env_class = env
         args = Config(agent_class=agent_class, env_class=env_class, env_args=env_args)
         args.cwd = cwd
         act = agent_class(
-            net_dim, env.state_dim, env.action_dim, gpu_id=gpu_id, args=args
+            net_dimension, env.state_dim, env.action_dim, gpu_id=gpu_id, args=args
         ).act
-        parameters_dict = {}
-        act = torch.load(actor_path)
-        for name, param in act.named_parameters():
-            parameters_dict[name] = torch.tensor(param.detach().cpu().numpy())
-
-        act.load_state_dict(parameters_dict)
+        # parameters_dict = {}
+        # act = torch.load(actor_path)
+        # for name, param in act.named_parameters():
+        #     parameters_dict[name] = torch.tensor(param.detach().cpu().numpy())
+        #
+        # act.load_state_dict(parameters_dict)
+        state_dict = torch.load(actor_path)
+        act.load_state_dict(state_dict)
 
         if_discrete = env.if_discrete
         device = next(act.parameters()).device
-        state = env.reset()
+        state, _ = env.reset()
         episode_returns = []  # the cumulative_return / initial_account
         episode_total_assets = [env.initial_total_asset]
         max_step = env.max_step
@@ -157,11 +155,12 @@ class DRLAgent:
             action = (
                 a_tensor.detach().cpu().numpy()[0]
             )  # not need detach(), because using torch.no_grad() outside
-            state, reward, done, _ = env.step(action)
+            state, reward, done, _, _ = env.step(action)
             total_asset = env.amount + (env.price_ary[env.day] * env.stocks).sum()
             episode_total_assets.append(total_asset)
             episode_return = total_asset / env.initial_total_asset
             episode_returns.append(episode_return)
+            # print(f"step is {steps}, price is: {env.price_ary[env.day]}, action is {action}, reward is {reward}, total_asset is {total_asset}")
             if done:
                 break
         print("Test Finished!")

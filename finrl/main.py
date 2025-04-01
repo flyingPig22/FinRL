@@ -56,7 +56,10 @@ def main() -> int:
         [DATA_SAVE_DIR, TRAINED_MODEL_DIR, TENSORBOARD_LOG_DIR, RESULTS_DIR]
     )
 
-    if options.mode == "train":
+    mode = options.mode
+    # mode = "test"
+
+    if mode == "train":
         from finrl import train
 
         env = StockTradingEnv
@@ -74,13 +77,14 @@ def main() -> int:
             technical_indicator_list=INDICATORS,
             drl_lib="elegantrl",
             env=env,
-            model_name="ppo",
-            cwd="./test_ppo",
+            model_name="dqn",
+            cwd="./model_stores/dqn_simple_v4.10",
             erl_params=ERL_PARAMS,
-            break_step=1e5,
+            break_step=1500000,
+            net_dim=[256, 128],
             kwargs=kwargs,
         )
-    elif options.mode == "test":
+    elif mode == "test":
         from finrl import test
 
         env = StockTradingEnv
@@ -98,12 +102,12 @@ def main() -> int:
             technical_indicator_list=INDICATORS,
             drl_lib="elegantrl",
             env=env,
-            model_name="ppo",
-            cwd="./test_ppo",
-            net_dimension=512,
+            model_name="dqn",
+            cwd="./model_stores/dqn_simple_v4.10",
+            net_dim=[256, 128],
             kwargs=kwargs,
         )
-    elif options.mode == "trade":
+    elif mode == "trade":
         from finrl import trade
 
         try:
@@ -113,7 +117,7 @@ def main() -> int:
                 "Please set your own ALPACA_API_KEY and ALPACA_API_SECRET in config_private.py"
             )
         env = StockTradingEnv
-        kwargs = {}
+        kwargs = {"net_dimension": [128, 64]}
         trade(
             start_date=TRADE_START_DATE,
             end_date=TRADE_END_DATE,

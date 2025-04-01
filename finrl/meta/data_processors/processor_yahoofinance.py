@@ -15,9 +15,9 @@ from typing import Type
 from typing import TypeVar
 from typing import Union
 
+import exchange_calendars as tc
 import numpy as np
 import pandas as pd
-import pandas_market_calendars as tc
 import pytz
 import yfinance as yf
 from bs4 import BeautifulSoup
@@ -181,23 +181,6 @@ class YahooFinanceProcessor:
 
     def convert_interval(self, time_interval: str) -> str:
         # Convert FinRL 'standardised' time periods to Yahoo format: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
-        yahoo_intervals = [
-            "1m",
-            "2m",
-            "5m",
-            "15m",
-            "30m",
-            "60m",
-            "90m",
-            "1h",
-            "1d",
-            "5d",
-            "1wk",
-            "1mo",
-            "3mo",
-        ]
-        if time_interval in yahoo_intervals:
-            return time_interval
         if time_interval in [
             "1Min",
             "2Min",
@@ -235,29 +218,40 @@ class YahooFinanceProcessor:
 
         # Download and save the data in a pandas DataFrame
         start_date = pd.Timestamp(start_date)
-        end_date = pd.Timestamp(end_date)
-        delta = timedelta(days=1)
+        # yf.download end is exclusive
+        end_date = pd.Timestamp(end_date) + timedelta(days=1)
+        delta = timedelta(days=30) if time_interval == "1d" else timedelta(days=1)
+        # delta = timedelta(days=1)
         data_df = pd.DataFrame()
         for tic in ticker_list:
             current_tic_start_date = start_date
             while (
-                current_tic_start_date <= end_date
+                # current_tic_start_date <= end_date
+                True
             ):  # downloading daily to workaround yfinance only allowing  max 7 calendar (not trading) days of 1 min data per single download
+                current_tic_end_date = current_tic_start_date + delta
+                if current_tic_end_date > end_date:
+                    current_tic_end_date = end_date
                 temp_df = yf.download(
                     tic,
                     start=current_tic_start_date,
-                    end=current_tic_start_date + delta,
+                    end=current_tic_end_date,
                     interval=self.time_interval,
                     proxy=proxy,
+                    progress=False,
+                    auto_adjust=False
                 )
+                print(f"Downloading history data for {tic}, from {current_tic_start_date} to {current_tic_end_date}")
                 if temp_df.columns.nlevels != 1:
                     temp_df.columns = temp_df.columns.droplevel(1)
 
                 temp_df["tic"] = tic
                 data_df = pd.concat([data_df, temp_df])
+                if current_tic_end_date == end_date:
+                    break
                 current_tic_start_date += delta
 
-        data_df = data_df.reset_index().drop(columns=["Adj Close"])
+        data_df = data_df.reset_index().drop(columns=["Adj Close"],errors="ignore")
         # convert the column names to match processor_alpaca.py as far as poss
         data_df.columns = [
             "timestamp",
@@ -302,14 +296,9 @@ class YahooFinanceProcessor:
                 df.tic == tic
             ]  # extract just the rows from downloaded data relating to this tic
             for i in range(tic_df.shape[0]):  # fill empty DataFrame using original data
-                tmp_timestamp = tic_df.iloc[i]["timestamp"]
-                if tmp_timestamp.tzinfo is None:
-                    tmp_timestamp = tmp_timestamp.tz_localize(NY)
-                else:
-                    tmp_timestamp = tmp_timestamp.tz_convert(NY)
-                tmp_df.loc[tmp_timestamp] = tic_df.iloc[i][
-                    ["open", "high", "low", "close", "volume"]
-                ]
+                tmp_df.loc[str(tic_df.iloc[i]["timestamp"])] = tic_df.iloc[
+                    i
+                ][["open", "high", "low", "close", "volume"]]
             # print("(9) tmp_df\n", tmp_df.to_string()) # print ALL dataframe to check for missing rows from download
 
             # if close on start date is NaN, fill data with first valid close
@@ -416,13 +405,13 @@ class YahooFinanceProcessor:
         :param data: (df) pandas dataframe
         :return: (df) pandas dataframe
         """
-        vix_df = self.download_data(["VIXY"], self.start, self.end, self.time_interval)
+        vix_df = self.download_data(["^VIX"], self.start, self.end, self.time_interval)
         cleaned_vix = self.clean_data(vix_df)
         print("cleaned_vix\n", cleaned_vix)
         vix = cleaned_vix[["timestamp", "close"]]
         print('cleaned_vix[["timestamp", "close"]\n', vix)
-        vix = vix.rename(columns={"close": "VIXY"})
-        print('vix.rename(columns={"close": "VIXY"}\n', vix)
+        vix = vix.rename(columns={"close": "VIX"})
+        print('vix.rename(columns={"close": "VIX"}\n', vix)
 
         df = data.copy()
         print("df\n", df)
@@ -494,6 +483,51 @@ class YahooFinanceProcessor:
         df = df.sort_values(["timestamp", "tic"]).reset_index(drop=True)
         return df
 
+    def custom_df_to_array(
+        self, df: pd.DataFrame, tech_indicator_list: list[str], if_vix: bool
+    ) -> list[np.ndarray]:
+        df = df.copy()
+        unique_ticker = df.tic.unique()
+        if_first_time = True
+        for tic in unique_ticker:
+            if if_first_time:
+                timestamp_array = df[df.tic == tic][["timestamp"]].values
+                price_array = df[df.tic == tic][["close"]].values
+                tech_array = df[df.tic == tic][tech_indicator_list].values
+                volume_array = df[df.tic == tic][["volume"]].values
+                open_price_array = df[df.tic == tic][["open"]].values
+                high_price_array = df[df.tic == tic][["high"]].values
+                low_price_array = df[df.tic == tic][["low"]].values
+                if if_vix:
+                    turbulence_array = df[df.tic == tic]["VIX"].values
+                else:
+                    turbulence_array = df[df.tic == tic]["turbulence"].values
+                if_first_time = False
+            else:
+                timestamp_array = np.hstack(
+                    [price_array, df[df.tic == tic][["timestamp"]].values]
+                )
+                price_array = np.hstack(
+                    [price_array, df[df.tic == tic][["close"]].values]
+                )
+                tech_array = np.hstack(
+                    [tech_array, df[df.tic == tic][tech_indicator_list].values]
+                )
+                volume_array = np.hstack(
+                    [volume_array, df[df.tic == tic][["volume"]].values]
+                )
+                open_price_array = np.hstack(
+                    [open_price_array, df[df.tic == tic][["open"]].values]
+                )
+                high_price_array = np.hstack(
+                    [high_price_array, df[df.tic == tic][["high"]].values]
+                )
+                low_price_array = np.hstack(
+                    [low_price_array, df[df.tic == tic][["low"]].values]
+                )
+        #        print("Successfully transformed into array")
+        return timestamp_array, price_array, tech_array, turbulence_array, volume_array, open_price_array, high_price_array, low_price_array
+
     def df_to_array(
         self, df: pd.DataFrame, tech_indicator_list: list[str], if_vix: bool
     ) -> list[np.ndarray]:
@@ -505,7 +539,7 @@ class YahooFinanceProcessor:
                 price_array = df[df.tic == tic][["close"]].values
                 tech_array = df[df.tic == tic][tech_indicator_list].values
                 if if_vix:
-                    turbulence_array = df[df.tic == tic]["VIXY"].values
+                    turbulence_array = df[df.tic == tic]["VIX"].values
                 else:
                     turbulence_array = df[df.tic == tic]["turbulence"].values
                 if_first_time = False
@@ -521,10 +555,12 @@ class YahooFinanceProcessor:
 
     def get_trading_days(self, start: str, end: str) -> list[str]:
         nyse = tc.get_calendar("NYSE")
-        df = nyse.date_range_htf("1D", pd.Timestamp(start), pd.Timestamp(end))
+        df = nyse.sessions_in_range(pd.Timestamp(start), pd.Timestamp(end))
         trading_days = []
         for day in df:
-            trading_days.append(str(day)[:10])
+            # trading_days.append(str(day)[:10])
+            trading_days.append(str(day))
+
         return trading_days
 
     # ****** NB: YAHOO FINANCE DATA MAY BE IN REAL-TIME OR DELAYED BY 15 MINUTES OR MORE, DEPENDING ON THE EXCHANGE ******
